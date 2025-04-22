@@ -11,4 +11,12 @@ fi
 
 VERSION=$1
 echo "==> Building provider version $VERSION"
-go build -ldflags="-s -w -X main.version=$VERSION" -o terraform-provider-cloudflare
+GOOS=${GOOS:-linux}
+GOARCH=${GOARCH:-amd64}
+if [ "$ADM64" = 1 ]; then
+  GOOS=${GOOS:-linux}
+  GOARCH=${GOARCH:-amd64}
+  GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="-s -w -X main.version=$VERSION" -o terraform-provider-cloudflare
+else
+  go build -ldflags="-s -w -X main.version=$VERSION" -o terraform-provider-cloudflare
+fi

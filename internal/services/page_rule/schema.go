@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listdefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -229,14 +230,10 @@ func ResourceSchema(ctx context.Context) schema.Schema {
 					"forwarding_url": schema.SingleNestedAttribute{
 						Optional:   true,
 						CustomType: customfield.NewNestedObjectType[PageRuleActionsForwardingURLModel](ctx),
-						Attributes: map[string]schema.Attribute{
-							"url": schema.StringAttribute{
-								Required: true,
-							},
-							"status_code": schema.Int64Attribute{
-								Required: true,
-							},
+						PlanModifiers: []planmodifier.Object{
+							objectplanmodifier.UseStateForUnknown(),
 						},
+						Attributes: GetStateHandlingForwardingURLSchema(ctx),
 					},
 					"host_header_override": schema.StringAttribute{
 						Optional: true,

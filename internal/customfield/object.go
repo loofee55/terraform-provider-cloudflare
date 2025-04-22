@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sync"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -15,6 +16,10 @@ var (
 	_ basetypes.ObjectTypable  = (*NestedObjectType[struct{}])(nil)
 	_ basetypes.ObjectValuable = (*NestedObject[struct{}])(nil)
 )
+
+// Global cache for StructToAttributes results.
+// Key: reflect.Type, Value: map[string]attr.Type
+var attributeTypeCache sync.Map
 
 // NestedObjectType represents a basetypes.ObjectType that is defined by a struct.
 type NestedObjectType[T any] struct {
@@ -236,8 +241,24 @@ func NewObjectMust[T any](ctx context.Context, t *T) NestedObject[T] {
 
 func StructToAttributes[T any](ctx context.Context) (map[string]attr.Type, diag.Diagnostics) {
 	var t T
+	typ := reflect.TypeOf(t)
+
+	// Check cache first
+	if cached, ok := attributeTypeCache.Load(typ); ok {
+		if cachedAttrs, typeOk := cached.(map[string]attr.Type); typeOk {
+			return cachedAttrs, nil
+		}
+		// Handle unexpected cache entry type (should ideally not happen)
+		// Optionally log this anomaly. Fall through to recompute.
+	}
+
 	val := reflect.ValueOf(t)
-	return StructFromAttributesGeneric(ctx, val)
+	attrs, diags := StructFromAttributesGeneric(ctx, val)
+	if !diags.HasError() {
+		// Store successful result in cache
+		attributeTypeCache.Store(typ, attrs)
+	}
+	return attrs, diags
 }
 
 func StructFromAttributesGeneric(ctx context.Context, val reflect.Value) (map[string]attr.Type, diag.Diagnostics) {
@@ -275,15 +296,15 @@ func StructFromAttributesGeneric(ctx context.Context, val reflect.Value) (map[st
 		if ok {
 			attributeTypes[tag] = attr.Type(ctx)
 		} else {
-			ty, diags := structFromValue(ctx, v)
-			diags.Append(diags...)
-			if diags.HasError() {
-				return nil, diags
+			ty, d := structFromValue(ctx, v)
+			diags.Append(d...)
+			if d.HasError() {
+				return nil, d
 			}
 			attributeTypes[tag] = ty
 		}
 	}
-	return attributeTypes, nil
+	return attributeTypes, diags
 }
 
 func structFromValue(ctx context.Context, v reflect.Value) (attr.Type, diag.Diagnostics) {
@@ -301,8 +322,8 @@ func structFromValue(ctx context.Context, v reflect.Value) (attr.Type, diag.Diag
 	if t.Kind() == reflect.Struct {
 		m, d := StructFromAttributesGeneric(ctx, v)
 		diags.Append(d...)
-		if diags.HasError() {
-			return nil, diags
+		if d.HasError() {
+			return nil, d
 		}
 		return basetypes.ObjectType{AttrTypes: m}, nil
 	} else if t.Kind() == reflect.Slice {

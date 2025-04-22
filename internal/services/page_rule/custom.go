@@ -3,12 +3,15 @@ package page_rule
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/cloudflare/cloudflare-go/v4/page_rules"
 	"github.com/cloudflare/terraform-provider-cloudflare/internal/apijson"
 	"github.com/cloudflare/terraform-provider-cloudflare/internal/customfield"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 func (m PageRuleModel) marshalCustom() (data []byte, err error) {
@@ -250,23 +253,22 @@ func (m *PageRuleActionsModel) Encode() (encoded []map[string]any, err error) {
 	if !m.ExplicitCacheControl.IsNull() {
 		encoded = append(encoded, map[string]any{"id": page_rules.PageRuleActionsIDExplicitCacheControl, "value": m.ExplicitCacheControl.ValueString()})
 	}
-	if !m.ForwardingURL.IsNull() {
-		var fw PageRuleActionsForwardingURLModel
-		m.ForwardingURL.As(context.TODO(), &fw, basetypes.ObjectAsOptions{})
-		encoded = append(encoded, map[string]any{
-			"id": page_rules.PageRuleActionsIDForwardingURL,
-			"value": map[string]any{
-				"url":         fw.URL.ValueString(),
-				"status_code": fw.StatusCode.ValueInt64(),
-			},
-		})
+
+	// Use the stabilized ForwardingURL handling with proper error handling
+	err = FixPageRuleForwardingURLNullIssue(m, &encoded)
+	if err != nil {
+		// We use fmt.Errorf to wrap the returned error which could be from diagnostics
+		// This ensures consistent error handling and avoids potential nil panics
+		return nil, fmt.Errorf("error handling ForwardingURL: %v", err)
 	}
+
 	if !m.HostHeaderOverride.IsNull() {
 		encoded = append(encoded, map[string]any{"id": page_rules.PageRuleActionsIDHostHeaderOverride, "value": m.HostHeaderOverride.ValueString()})
 	}
 	if !m.IPGeolocation.IsNull() {
 		encoded = append(encoded, map[string]any{"id": page_rules.PageRuleActionsIDIPGeolocation, "value": m.IPGeolocation.ValueString()})
 	}
+
 	if !m.Mirage.IsNull() {
 		encoded = append(encoded, map[string]any{"id": page_rules.PageRuleActionsIDMirage, "value": m.Mirage.ValueString()})
 	}
@@ -308,6 +310,212 @@ func (m *PageRuleActionsModel) Encode() (encoded []map[string]any, err error) {
 	}
 
 	return
+}
+
+// Decode populates the PageRuleActionsModel fields from the API's actions list format.
+func (m *PageRuleActionsModel) Decode(ctx context.Context, actions []apiActionValue) diag.Diagnostics {
+	var diags diag.Diagnostics
+	// Initialize all fields to null/default initially to clear previous state
+	*m = PageRuleActionsModel{}
+
+	for _, action := range actions {
+		tflog.Debug(ctx, "Decoding action from API", map[string]interface{}{"id": action.ID, "value": action.Value})
+		switch action.ID {
+		case string(page_rules.PageRuleActionsIDAlwaysUseHTTPS):
+			m.AlwaysUseHTTPS = types.BoolValue(true)
+		case string(page_rules.PageRuleActionsIDAutomaticHTTPSRewrites):
+			if v, ok := action.Value.(string); ok {
+				m.AutomaticHTTPSRewrites = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for automatic_https_rewrites", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDBrowserCacheTTL):
+			if v, ok := action.Value.(float64); ok { // JSON numbers often unmarshal as float64
+				m.BrowserCacheTTL = types.Int64Value(int64(v))
+			} else {
+				diags.AddWarning("Invalid type for browser_cache_ttl", fmt.Sprintf("Expected number, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDBrowserCheck):
+			if v, ok := action.Value.(string); ok {
+				m.BrowserCheck = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for browser_check", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDBypassCacheOnCookie):
+			if v, ok := action.Value.(string); ok {
+				m.BypassCacheOnCookie = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for bypass_cache_on_cookie", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDCacheByDeviceType):
+			if v, ok := action.Value.(string); ok {
+				m.CacheByDeviceType = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for cache_by_device_type", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDCacheDeceptionArmor):
+			if v, ok := action.Value.(string); ok {
+				m.CacheDeceptionArmor = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for cache_deception_armor", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDCacheLevel):
+			if v, ok := action.Value.(string); ok {
+				m.CacheLevel = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for cache_level", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDCacheOnCookie):
+			if v, ok := action.Value.(string); ok {
+				m.CacheOnCookie = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for cache_on_cookie", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDDisableApps):
+			// Note: API represents this as just {"id": "disable_apps"}, no value usually.
+			// Presence implies true.
+			m.DisableApps = types.BoolValue(true)
+		case string(page_rules.PageRuleActionsIDDisablePerformance):
+			m.DisablePerformance = types.BoolValue(true)
+		case string(page_rules.PageRuleActionsIDDisableSecurity):
+			m.DisableSecurity = types.BoolValue(true)
+		case string(page_rules.PageRuleActionsIDDisableZaraz):
+			m.DisableZaraz = types.BoolValue(true)
+		case string(page_rules.PageRuleActionsIDEdgeCacheTTL):
+			if v, ok := action.Value.(float64); ok { // JSON numbers often unmarshal as float64
+				m.EdgeCacheTTL = types.Int64Value(int64(v))
+			} else {
+				diags.AddWarning("Invalid type for edge_cache_ttl", fmt.Sprintf("Expected number, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDEmailObfuscation):
+			if v, ok := action.Value.(string); ok {
+				m.EmailObfuscation = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for email_obfuscation", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDExplicitCacheControl):
+			if v, ok := action.Value.(string); ok {
+				m.ExplicitCacheControl = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for explicit_cache_control", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDForwardingURL):
+			if valMap, ok := action.Value.(map[string]interface{}); ok {
+				var fwData PageRuleActionsForwardingURLModel
+				if urlVal, ok := valMap["url"].(string); ok {
+					fwData.URL = types.StringValue(urlVal)
+				} else {
+					diags.AddWarning("Invalid type for forwarding_url.url", fmt.Sprintf("Expected string, got %T", valMap["url"]))
+				}
+				if scVal, ok := valMap["status_code"].(float64); ok { // JSON number
+					fwData.StatusCode = types.Int64Value(int64(scVal))
+				} else {
+					diags.AddWarning("Invalid type for forwarding_url.status_code", fmt.Sprintf("Expected number, got %T", valMap["status_code"]))
+				}
+				// Create the NestedObject
+				obj, d := customfield.NewObject(ctx, &fwData)
+				diags.Append(d...)
+				m.ForwardingURL = obj
+			} else {
+				diags.AddWarning("Invalid type for forwarding_url value", fmt.Sprintf("Expected map[string]interface{}, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDHostHeaderOverride):
+			if v, ok := action.Value.(string); ok {
+				m.HostHeaderOverride = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for host_header_override", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDIPGeolocation):
+			if v, ok := action.Value.(string); ok {
+				m.IPGeolocation = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for ip_geolocation", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDMirage):
+			if v, ok := action.Value.(string); ok {
+				m.Mirage = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for mirage", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDOpportunisticEncryption):
+			if v, ok := action.Value.(string); ok {
+				m.OpportunisticEncryption = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for opportunistic_encryption", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDOriginErrorPagePassThru):
+			if v, ok := action.Value.(string); ok {
+				m.OriginErrorPagePassThru = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for origin_error_page_pass_thru", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDPolish):
+			if v, ok := action.Value.(string); ok {
+				m.Polish = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for polish", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDResolveOverride):
+			if v, ok := action.Value.(string); ok {
+				m.ResolveOverride = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for resolve_override", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDRespectStrongEtag):
+			if v, ok := action.Value.(string); ok {
+				m.RespectStrongEtag = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for respect_strong_etag", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDResponseBuffering):
+			if v, ok := action.Value.(string); ok {
+				m.ResponseBuffering = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for response_buffering", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDRocketLoader):
+			if v, ok := action.Value.(string); ok {
+				m.RocketLoader = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for rocket_loader", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDSecurityLevel):
+			if v, ok := action.Value.(string); ok {
+				m.SecurityLevel = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for security_level", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDSortQueryStringForCache):
+			if v, ok := action.Value.(string); ok {
+				m.SortQueryStringForCache = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for sort_query_string_for_cache", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDSSL):
+			if v, ok := action.Value.(string); ok {
+				m.SSL = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for ssl", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDTrueClientIPHeader):
+			if v, ok := action.Value.(string); ok {
+				m.TrueClientIPHeader = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for true_client_ip_header", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		case string(page_rules.PageRuleActionsIDWAF):
+			if v, ok := action.Value.(string); ok {
+				m.WAF = types.StringValue(v)
+			} else {
+				diags.AddWarning("Invalid type for waf", fmt.Sprintf("Expected string, got %T", action.Value))
+			}
+		// TODO: Add cases for cache_key_fields and cache_ttl_by_status (more complex decoding)
+		default:
+			tflog.Warn(ctx, "Unknown Page Rule action ID received from API", map[string]interface{}{"id": action.ID})
+		}
+	}
+
+	return diags
 }
 
 func convertToStringSlice(b []basetypes.StringValue) []string {
